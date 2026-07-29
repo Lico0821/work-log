@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="巡检日志">
+  <link rel="manifest" href="./manifest.json">
+  <title>工程巡检日志 v2</title>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(function() {});
+    }
+  </script>
+  <script>
+    // 如果 CDN 加载失败，给出明确提示
+    window.addEventListener('DOMContentLoaded', function() {
+      if (typeof JSZip === 'undefined') {
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#ef4444;font-size:18px;font-family:sans-serif;">⚠️ JSZip 库加载失败，请检查网络连接后刷新页面<br><small style="color:#888;">如持续失败请联系管理员</small></div>';
+      }
+    });
+  </script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 20px 12px;
+    }
+    .app { width: 100%; max-width: 1100px; display: flex; flex-direction: column; gap: 14px; }
+
+    /* 文件加载区 */
+    .file-card {
+      background: #1a1d27;
+      border: 2px dashed rgba(255,255,255,0.12);
+      border-radius: 14px;
+      padding: 24px;
+      text-align: center;
+      transition: border-color 0.2s;
+      cursor: pointer;
+    }
+    .file-card:hover { border-color: #3b82f6; }
+    .file-card.loaded { border-style: solid; border-color: #10b981; background: rgba(16,185,129,0.04); cursor: default; }
+    .file-card .icon { font-size: 36px; margin-bottom: 8px; }
+    .file-card .label { font-size: 15px; color: #ccc; font-weight: 600; }
+    .file-card .detail { font-size: 12px; color: #666; margin-top: 4px; }
+    .file-card .detail em { color: #10b981; font-style: normal; }
+    .file-card .btn-row { margin-top: 12px; display: flex; gap: 8px; justify-content: center; }
+
+    .btn {
+      padding: 9px 18px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      cursor: pointer; border: none; transition: all 0.15s; white-space: nowrap;
+    }
+    .btn:active { transform: scale(0.96); }
+    .btn-outline {
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.05); color: #bbb;
+    }
+    .btn-outline:hover { background: rgba(255,255,255,0.1); }
+    .btn-primary { background: #3b82f6; color: #fff; }
+    .btn-primary:hover { background: #2563eb; }
+    .btn-green { background: #10b981; color: #fff; }
+    .btn-green:hover { background: #059669; }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+
+    /* 粘贴区 */
+    .paste-card {
+      background: #1a1d27;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .paste-card .title { font-size: 14px; font-weight: 600; color: #ccc; margin-bottom: 10px; }
+    .paste-card textarea {
+      width: 100%; min-height: 90px; padding: 12px;
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+      background: #13151c; color: #ddd; font-size: 14px;
+      font-family: inherit; line-height: 1.7; resize: vertical; outline: none;
+    }
+    .paste-card textarea:focus { border-color: #3b82f6; }
+    .paste-card textarea::placeholder { color: #555; }
+    .paste-card .hint { font-size: 11px; color: #666; margin-top: 8px; }
+    .paste-card .hint em { color: #3b82f6; font-style: normal; }
+    .paste-card .row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 10px; gap: 10px; flex-wrap: wrap;
+    }
+    .paste-card .row input[type="date"] {
+      padding: 7px 10px; border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 6px; background: #13151c; color: #fff; font-size: 13px; outline: none;
+    }
+    .paste-card .row input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+    .preview-tag {
+      font-size: 12px; color: #f59e0b;
+      background: rgba(245,158,11,0.1); padding: 4px 10px; border-radius: 10px;
+    }
+
+    /* 表格 */
+    .table-wrap {
+      overflow-x: auto; border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px; background: #1a1d27;
+    }
+    table {
+      width: 100%; border-collapse: collapse; font-size: 13px; min-width: 900px;
+    }
+    thead th {
+      padding: 10px 8px; text-align: center; font-weight: 600; color: #999;
+      font-size: 12px; background: #111319; border-bottom: 1px solid rgba(255,255,255,0.08);
+      white-space: nowrap;
+    }
+    thead th.col-location, thead th.col-issue { text-align: left; }
+    tbody td {
+      padding: 7px 8px; border-bottom: 1px solid rgba(255,255,255,0.03);
+      vertical-align: top; line-height: 1.4; text-align: center;
+    }
+    tbody td.col-location, tbody td.col-issue, tbody td.col-date { text-align: left; }
+    tbody td input {
+      width: 100%; padding: 5px 6px; border: 1px solid transparent;
+      border-radius: 4px; background: transparent; color: #ddd;
+      font-size: 13px; font-family: inherit; outline: none; text-align: inherit;
+    }
+    tbody td input:hover { border-color: rgba(255,255,255,0.1); }
+    tbody td input:focus { border-color: #3b82f6; background: #111319; }
+    .col-num { width: 50px; color: #666; text-align: center; }
+    .col-date { width: 100px; }
+    .col-location { width: 180px; }
+    .col-issue { min-width: 220px; }
+    .col-time { width: 130px; text-align: center !important; }
+    .col-time input { text-align: center !important; }
+    .col-result { width: 100px; text-align: center !important; }
+    .col-result input { text-align: center !important; }
+    .col-del { width: 44px; text-align: center; }
+    .col-del button {
+      background: none; border: none; color: #555; cursor: pointer;
+      font-size: 15px; padding: 2px 6px; border-radius: 4px;
+    }
+    .col-del button:hover { color: #ef4444; background: rgba(239,68,68,0.1); }
+
+    .section-label {
+      font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px;
+      padding: 4px 0; margin-top: 4px;
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      padding: 10px 24px; border-radius: 10px; background: #10b981; color: #000;
+      font-weight: 600; font-size: 13px; opacity: 0; transition: opacity 0.3s;
+      pointer-events: none; z-index: 100;
+    }
+    .toast.show { opacity: 1; }
+    .toast.warn { background: #f59e0b; }
+
+    /* 手机端适配 */
+    @media (max-width: 600px) {
+      body { padding: 10px 6px; }
+      .app { gap: 10px; }
+      .file-card { padding: 16px; }
+      .file-card .icon { font-size: 28px; }
+      .paste-card { padding: 12px; }
+      .paste-card .row { flex-direction: column; align-items: stretch; }
+      .paste-card .row input[type="date"] { width: 100%; }
+      .paste-card textarea { font-size: 16px; min-height: 80px; }
+      table { font-size: 12px; min-width: 600px; }
+      thead th { padding: 8px 4px; font-size: 11px; }
+      tbody td { padding: 6px 4px; }
+      tbody td input { font-size: 12px; padding: 4px; }
+      h1 { font-size: 18px; }
+      .btn { padding: 8px 12px; font-size: 12px; }
+      .btn-primary { padding: 10px 16px; }
+      .col-num { width: 32px; }
+      .col-date { width: 70px; }
+      .col-time { width: 80px; }
+      .col-result { width: 70px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1 style="font-size:22px;color:#fff;">🏗️ 工程巡检记录表 ✅居中已修复</h1>
+
+    <!-- 文件加载 -->
+    <div class="file-card" id="fileCard">
+      <div class="icon">📂</div>
+      <div class="label">点击选择原始 Excel 文件</div>
+      <div class="detail">选择你已有的「月度工程巡检记录表」文件，后续内容将直接追加进去，<em>格式和旧数据全部保留</em></div>
+      <div class="btn-row">
+        <button class="btn btn-primary btn-sm" id="btnPick">📁 选择文件</button>
+      </div>
+      <input type="file" id="fileInput" accept=".xlsx" style="display:none;">
+    </div>
+
+    <!-- 已有数据概览 -->
+    <div id="infoBar" style="display:none;font-size:13px;color:#888;padding:4px 0;"></div>
+
+    <!-- 粘贴区 -->
+    <div class="paste-card" id="pasteCard" style="display:none;">
+      <div class="title">📋 从备忘录粘贴新增内容</div>
+      <textarea id="pasteArea" placeholder="从手机备忘录复制内容到这里粘贴...
+
+每行一条，例如：
+A1栋4层女卫空调管发生噪声修不了已上报
+A1栋10层西北角椅子靠背无法回弹已修复
+A7栋614室洗手台底板脱落已修复
+园区下水井盖不平异响已处理
+
+如果第一行是日期（如"6月3日"），会自动填入日期"></textarea>
+      <div class="hint">
+        💡 自动拆分：<em>位置+问题+状态</em> → "A1栋4层女卫空调管发生噪声修不了已上报"
+        拆为 → 位置=<em>A1栋</em> | 问题=4层女卫空调管发生噪声修不了 | 结果=已上报
+      </div>
+      <div class="row">
+        <label style="color:#888;font-size:13px;">年份：</label>
+        <input type="number" id="pasteYear" style="width:80px;padding:7px 10px;border:1px solid rgba(255,255,255,0.12);border-radius:6px;background:#13151c;color:#fff;font-size:13px;outline:none;" min="2020" max="2030" value="2026">
+        <label style="color:#888;font-size:13px;margin-left:4px;">日期：</label>
+        <input type="date" id="pasteDate">
+        <span class="preview-tag" id="previewTag" style="display:none;"></span>
+        <button class="btn btn-primary btn-sm" id="btnParse">🔍 解析预览</button>
+      </div>
+      <div class="hint">
+        📌 因为你只写月日（如"11月5日"），年份从左边<span style="color:#3b82f6;">年份选择器</span>获取。
+        不同年份的同月会自动分到不同 sheet（如 2025年11月 vs 2026年11月）。
+      </div>
+    </div>
+
+    <!-- 新增内容预览 -->
+    <div id="newSection" style="display:none;">
+      <div class="section-label">🆕 待追加的新记录（蓝色高亮）</div>
+      <div class="table-wrap" style="margin-top:6px;">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-num">序号</th>
+              <th class="col-date">巡检日期</th>
+              <th class="col-location">位置</th>
+              <th class="col-issue">问题项</th>
+              <th class="col-time">整改时间</th>
+              <th class="col-result">整改结果</th>
+              <th class="col-del"></th>
+            </tr>
+          </thead>
+          <tbody id="newTableBody"></tbody>
+        </table>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
+        <button class="btn btn-outline btn-sm" id="btnClearNew">清空</button>
+        <button class="btn btn-green btn-sm" id="btnAppend">✅ 追加到文件（格式不变）</button>
+      </div>
+    </div>
+
+    <!-- 原有内容 (只读) -->
+    <div id="oldSection" style="display:none;">
+      <div class="section-label">📄 文件已有内容（只读，不会被修改）</div>
+      <div class="table-wrap" style="margin-top:6px;max-height:400px;overflow-y:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th class="col-num">序号</th>
+              <th class="col-date">巡检日期</th>
+              <th class="col-location">位置</th>
+              <th class="col-issue">问题项</th>
+              <th class="col-time">整改时间</th>
+              <th class="col-result">整改结果</th>
+            </tr>
+          </thead>
+          <tbody id="oldTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ==================== 状态 ====================
+    let fileHandle = null;       // FileSystemFileHandle
+    let originalZipData = null;  // ArrayBuffer of the original xlsx
+    let sheetInfo = null;        // { name, data rows parsed }
+    let allSheetsData = [];      // [{ name, rows: [{cells}] }] from SheetJS
+    let newEntries = [];         // parsed new entries to append
+    let lastDataRowNum = 0;     // last data row number in the active sheet
+    let activeSheetName = '';   // the sheet being edited
+
+    // ==================== DOM ====================
+    const fileCard = document.getElementById('fileCard');
+    const fileInput = document.getElementById('fileInput');
+    const btnPick = document.getElementById('btnPick');
+    const pasteCard = document.getElementById('pasteCard');
+    const pasteArea = document.getElementById('pasteArea');
+    const pasteDate = document.getElementById('pasteDate');
+    const pasteYear = document.getElementById('pasteYear');
+    const previewTag = document.getElementById('previewTag');
+    const btnParse = document.getElementById('btnParse');
+    const newSection = document.getElementById('newSection');
+    const newTableBody = document.getElementById('newTableBody');
+    const oldSection = document.getElementById('oldSection');
+    const oldTableBody = document.getElementById('oldTableBody');
+    const infoBar = document.getElementById('infoBar');
+    const btnClearNew = document.getElementById('btnClearNew');
+    const btnAppend = document.getElementById('btnAppend');
+    const toast = document.getElementById('toast');
+
+    // ==================== Toast ====================
+    let toastTimer;
+    function showToast(msg, warn) {
+      toast.textContent = msg;
+      toast.className = 'toast' + (warn ? ' warn' : '');
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 2500);
+    }
+
+    // ==================== 文件选择 ====================
+    btnPick.addEventListener('click', () => fileInput.click());
+    fileCard.addEventListener('click', (e) => {
+      if (e.target === btnPick || btnPick.contains(e.target)) return;
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      await loadFile(file);
+    });
+
+    async function loadFile(file) {
+      try {
+        const arrayBuf = await file.arrayBuffer();
+        originalZipData = arrayBuf.slice(0); // 保留原始副本
+
+        // 用 SheetJS 解析数据
+        const wb = XLSX.read(arrayBuf, { type: 'array' });
+
+        allSheetsData = [];
+        for (const name of wb.SheetNames) {
+          const ws = wb.Sheets[name];
+          const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
+          allSheetsData.push({ name, rows: json });
+        }
+
+        if (allSheetsData.length === 0) {
+          showToast('⚠️ 文件中没有找到数据', true);
+          return;
+        }
+
+        // 找到第一个有数据的 sheet 作为活跃 sheet
+        activeSheetName = allSheetsData[0].name;
+        renderOldData();
+
+        // 更新 UI
+        fileCard.classList.add('loaded');
+        fileCard.querySelector('.icon').textContent = '✅';
+        fileCard.querySelector('.label').textContent = file.name;
+        const sheetNames = allSheetsData.map(s => s.name).join('、');
+        infoBar.textContent = `📊 已加载: ${file.name} | ${allSheetsData.length} 个工作表: ${sheetNames} | 共 ${allSheetsData.reduce((s, sh) => s + sh.rows.length, 0)} 行`;
+        infoBar.style.display = 'block';
+        pasteCard.style.display = 'block';
+        oldSection.style.display = 'block';
+        pasteDate.value = getToday();
+        newEntries = [];
+        renderNewPreview();
+        newSection.style.display = 'none';
+
+        showToast(`✅ 已加载 ${file.name}`);
+      } catch (err) {
+        console.error(err);
+        showToast('⚠️ 文件读取失败: ' + err.message, true);
+      }
+    }
+
+    function getToday() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+
+    // ==================== 渲染原有数据 ====================
+    function renderOldData() {
+      const sheet = allSheetsData.find(s => s.name === activeSheetName);
+      if (!sheet) { oldTableBody.innerHTML = ''; return; }
+
+      const rows = sheet.rows;
+      // 找到最后一个有序号的数据行
+      let lastDataIdx = -1;
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const row = rows[i];
+        if (row[0] && String(row[0]).trim() && !isNaN(Number(row[0]))) {
+          lastDataIdx = i;
+          break;
+        }
+      }
+      lastDataRowNum = lastDataIdx >= 0 ? Number(rows[lastDataIdx][0]) : 0;
+
+      // 只显示有实际内容的行（过滤掉完全空的行）
+      const displayRows = rows.filter(r => r.some(c => c !== '' && c !== null && c !== undefined));
+
+      oldTableBody.innerHTML = displayRows.map((r, i) => {
+        const colClasses = ['col-num', 'col-date', 'col-location', 'col-issue', 'col-time', 'col-result'];
+        const colStyles = ['', '', '', '', 'text-align:center', 'text-align:center'];
+        const cells = [];
+        for (let c = 0; c < 6; c++) {
+          cells.push(`<td class="${colClasses[c]}" style="${colStyles[c]}">${escapeHtml(String(r[c] ?? ''))}</td>`);
+        }
+        return `<tr>${cells.join('')}</tr>`;
+      }).join('');
+    }
+
+    // ==================== 解析新条目 ====================
+    function parseDateFromText(text) {
+      const m = text.match(/^(\d{1,2})月(\d{1,2})日/);
+      if (!m) return null;
+      return { month: parseInt(m[1]), day: parseInt(m[2]) };
+    }
+
+    function parseOneLine(line, defaultDate) {
+      const trimmed = line.trim();
+      if (!trimmed) return null;
+
+      let result = '已处理';
+      let rest = trimmed;
+
+      // 1. 提取末尾状态词
+      const statusPatterns = [
+        /[，,。.\s]*(已修复|已上报|已处理|已处理完成|已安装完成|已拆除完成|已更换|已疏通|已消除|已消除处理|已恢复正常|已调整完成|待观察|已安排|已下单|需更换|需维修|修复|处理好|处理完成|修不了)[。.]?$/,
+        /[，,。.\s]*(\S+不了)[。.]?$/,
+      ];
+      for (const pat of statusPatterns) {
+        const m = rest.match(pat);
+        if (m) {
+          result = m[1];
+          rest = rest.slice(0, m.index).trim();
+          break;
+        }
+      }
+
+      // 2. 提取位置前缀（六月风格：只提取建筑/区域级别，楼层房间留在问题项中）
+      let location = '';
+      const locPatterns = [
+        // "A1栋" "A7栋" "A9栋" 等 — 楼栋（含裙楼）
+        /^(A\d+栋(?:裙楼)?)/,
+        // "A3A9A7" 这种纯编号组合
+        /^(A\d+(?:[A-Z]*\d+)+)/,
+        // "园区" "北区" "南区" "东区" "西区"
+        /^(园区|北区|南区|东区|西区)/,
+      ];
+
+      for (const pat of locPatterns) {
+        const m = rest.match(pat);
+        if (m) {
+          location = m[1];
+          rest = rest.slice(m[0].length).trim();
+          break;
+        }
+      }
+
+      // 3. 剩余全部作为问题项
+      const issue = rest || trimmed;
+      const dateStr = defaultDate ? `${defaultDate.month}月${defaultDate.day}日` : '';
+
+      return {
+        date: dateStr,
+        location: location,
+        issue: issue,
+        repairTime: '√',
+        result: result
+      };
+    }
+
+    function parseBatch(text) {
+      const lines = text.split(/\n/).map(s => s.trim()).filter(s => s);
+      if (lines.length === 0) return { rows: [], detectedDate: null };
+
+      let currentDate = null;   // 当前段落日期
+      let firstDate = null;     // 第一个遇到的日期
+      const rows = [];
+
+      for (const line of lines) {
+        const dateInfo = parseDateFromText(line);
+        if (dateInfo) {
+          // 遇到日期行 → 切换当前日期
+          currentDate = dateInfo;
+          if (!firstDate) firstDate = dateInfo;
+          continue;
+        }
+        // 普通内容行 → 使用当前日期解析
+        const parsed = parseOneLine(line, currentDate || firstDate);
+        if (parsed) rows.push(parsed);
+      }
+
+      return { rows, detectedDate: firstDate };
+    }
+
+    btnParse.addEventListener('click', () => {
+      if (!originalZipData) {
+        showToast('⚠️ 请先选择原始 Excel 文件', true);
+        return;
+      }
+
+      const text = pasteArea.value;
+      const { rows, detectedDate } = parseBatch(text);
+
+      if (rows.length === 0) {
+        showToast('⚠️ 未识别到有效内容', true);
+        return;
+      }
+
+      newEntries = rows;
+
+      // 按日期排序（1日在前，23日在后）
+      newEntries.sort((a, b) => {
+        const ma = a.date.match(/(\d+)月(\d+)日/);
+        const mb = b.date.match(/(\d+)月(\d+)日/);
+        if (!ma || !mb) return 0;
+        return parseInt(ma[1])*100 + parseInt(ma[2]) - (parseInt(mb[1])*100 + parseInt(mb[2]));
+      });
+
+      if (detectedDate) {
+        const yr = parseInt(pasteYear.value) || new Date().getFullYear();
+        pasteDate.value = yr + '-' + String(detectedDate.month).padStart(2,'0') + '-' + String(detectedDate.day).padStart(2,'0');
+      } else if (!pasteDate.value) {
+        pasteDate.value = getToday();
+      }
+
+      // 仅对没有日期的条目用 pasteDate 填充
+      if (pasteDate.value) {
+        const parts = pasteDate.value.split('-');
+        const dateStr = `${parseInt(parts[1])}月${parseInt(parts[2])}日`;
+        newEntries.forEach(e => {
+          if (!e.date) e.date = dateStr;
+        });
+      }
+
+      renderNewPreview();
+      newSection.style.display = 'block';
+      showToast(`🔍 已解析 ${newEntries.length} 条新记录`);
+    });
+
+    function renderNewPreview() {
+      previewTag.style.display = newEntries.length > 0 ? 'inline' : 'none';
+      previewTag.textContent = `${newEntries.length} 条待追加`;
+
+      if (newEntries.length === 0) {
+        newTableBody.innerHTML = '';
+        newSection.style.display = 'none';
+        return;
+      }
+
+      const startNum = lastDataRowNum;
+      newTableBody.innerHTML = newEntries.map((e, i) => `
+        <tr class="new-row">
+          <td class="col-num" style="color:#3b82f6;">${startNum + i + 1}</td>
+          <td class="col-date"><input value="${escapeHtml(e.date)}" data-idx="${i}" data-field="date"></td>
+          <td class="col-location"><input value="${escapeHtml(e.location)}" data-idx="${i}" data-field="location"></td>
+          <td class="col-issue"><input value="${escapeHtml(e.issue)}" data-idx="${i}" data-field="issue"></td>
+          <td class="col-time"><input value="${escapeHtml(e.repairTime)}" data-idx="${i}" data-field="repairTime" style="text-align:center"></td>
+          <td class="col-result"><input value="${escapeHtml(e.result)}" data-idx="${i}" data-field="result" style="text-align:center"></td>
+          <td class="col-del"><button data-idx="${i}">✕</button></td>
+        </tr>
+      `).join('');
+
+      // 编辑事件
+      newTableBody.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('input', () => {
+          const idx = parseInt(inp.dataset.idx);
+          const field = inp.dataset.field;
+          if (newEntries[idx]) newEntries[idx][field] = inp.value;
+        });
+      });
+
+      // 删除事件
+      newTableBody.querySelectorAll('.col-del button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.dataset.idx);
+          newEntries.splice(idx, 1);
+          renderNewPreview();
+        });
+      });
+    }
+
+    btnClearNew.addEventListener('click', () => {
+      newEntries = [];
+      pasteArea.value = '';
+      renderNewPreview();
+    });
+
+    // ==================== 追加到文件 ====================
+    btnAppend.addEventListener('click', async () => {
+      if (newEntries.length === 0) {
+        showToast('⚠️ 没有待追加的内容', true);
+        return;
+      }
+      if (!originalZipData) {
+        showToast('⚠️ 请先选择原始文件', true);
+        return;
+      }
+      if (typeof JSZip === 'undefined') {
+        alert('JSZip 库未加载成功，请刷新页面重试。');
+        return;
+      }
+
+      // 按日期排序（确保 1日在前，23日在后）
+      newEntries.sort((a, b) => {
+        const ma = a.date.match(/(\d+)月(\d+)日/);
+        const mb = b.date.match(/(\d+)月(\d+)日/);
+        if (!ma || !mb) return 0;
+        return parseInt(ma[1])*100 + parseInt(ma[2]) - (parseInt(mb[1])*100 + parseInt(mb[2]));
+      });
+
+      const count = newEntries.length;
+      btnAppend.disabled = true;
+      btnAppend.textContent = '⏳ 处理中...';
+
+      // 将年份选择器的值注入到无年份的条目中
+      var selYear = parseInt(pasteYear.value) || new Date().getFullYear();
+      for (var ei = 0; ei < newEntries.length; ei++) {
+        if (newEntries[ei].date && !newEntries[ei].date.match(/\d{4}年/)) {
+          // 在月日前补年份，使 extractYear 能正确提取
+          newEntries[ei]._year = selYear;
+        }
+      }
+
+      try {
+        const result = await appendEntriesToXlsx(originalZipData, newEntries, selYear);
+        const newBuffer = result.buffer;
+        originalZipData = newBuffer;
+
+        // 更新内存数据
+        const wb = XLSX.read(newBuffer, { type: 'array' });
+        allSheetsData = [];
+        for (const name of wb.SheetNames) {
+          const ws = wb.Sheets[name];
+          const json = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
+          allSheetsData.push({ name, rows: json });
+        }
+        activeSheetName = wb.SheetNames[wb.SheetNames.length - 1] || activeSheetName;
+        renderOldData();
+
+        // 下载
+        downloadBuffer(newBuffer);
+
+        // 清空新增区
+        newEntries = [];
+        pasteArea.value = '';
+        renderNewPreview();
+
+        var sheetNames = wb.SheetNames.join(', ');
+        showToast('✅ 已追加 ' + count + ' 条 | Sheet: ' + sheetNames + ' | 文件已下载');
+      } catch (err) {
+        console.error('保存失败:', err);
+        alert('保存失败: ' + (err.message || '未知错误') + '\n\n请按 F12 打开控制台查看详情。');
+        showToast('⚠️ 保存失败: ' + err.message, true);
+      } finally {
+        btnAppend.disabled = false;
+        btnAppend.textContent = '✅ 追加到文件（格式不变）';
+      }
+    });
+
+    // 从日期字符串提取月份，如 "7月22日" → "7月"
+    function extractMonth(dateStr) {
+      if (!dateStr) return null;
+      const m = dateStr.match(/(\d{1,2})月/);
+      return m ? m[1] + '月' : null;
+    }
+
+    // 从日期字符串提取年份
+    function extractYear(dateStr, fallbackYear) {
+      if (!dateStr) return fallbackYear;
+      const m = dateStr.match(/(\d{4})年/);
+      return m ? parseInt(m[1]) : fallbackYear;
+    }
+
+    async function appendEntriesToXlsx(zipData, entries, selYear) {
+      const zip = await JSZip.loadAsync(zipData);
+
+      // 列出所有文件
+      const allPaths = [];
+      zip.forEach(p => allPaths.push(p));
+      console.log('ZIP 文件列表:', allPaths);
+
+      // 解析 workbook.xml
+      let wbXml = await zip.file('xl/workbook.xml').async("text");
+      const sheetMap = parseSheetMap(wbXml);
+      console.log('Sheet map:', sheetMap);
+
+      // 读取 rels
+      let relsXml = await zip.file('xl/_rels/workbook.xml.rels').async("text");
+      const relsPath = 'xl/_rels/workbook.xml.rels';
+
+      // 读取 Content_Types.xml
+      let contentTypesXml = '';
+      const ctPath = '[Content_Types].xml';
+      if (zip.file(ctPath)) {
+        contentTypesXml = await zip.file(ctPath).async("text");
+      }
+
+      // 读取共享字符串
+      const sstPath = 'xl/sharedStrings.xml';
+      let sstEntries = [];
+      let sstNs = '';
+      if (zip.file(sstPath)) {
+        let sstXml = await zip.file(sstPath).async("text");
+        const sstNsMatch = sstXml.match(/<(\w+):sst\b/);
+        sstNs = sstNsMatch ? sstNsMatch[1] + ':' : '';
+        sstEntries = parseSharedStrings(sstXml, sstNs);
+        console.log('共享字符串数:', sstEntries.length);
+      }
+
+      // 日期字符串 → Excel 日期序列号
+      // 用已知基准校准: 2026-01-03 = Excel序列号 46025
+      const REF_DATE = Date.UTC(2026, 0, 3);
+      const REF_SERIAL = 46025;
+      const MS_PER_DAY = 86400000;
+      function dateToExcelSerial(dateStr, year) {
+        if (!dateStr) return null;
+        const m = dateStr.match(/(\d{1,2})月(\d{1,2})日/);
+        if (!m) return null;
+        const month = parseInt(m[1]), day = parseInt(m[2]);
+        const targetMs = Date.UTC(year, month - 1, day);
+        const daysDiff = Math.round((targetMs - REF_DATE) / MS_PER_DAY);
+        return REF_SERIAL + daysDiff;
+      }
+
+      // 获取模板 sheet 信息（用于创建新 sheet）
+      const templateSheetName = Object.keys(sheetMap)[0];
+      const templateRId = sheetMap[templateSheetName];
+      const templateTarget = parseRelsTarget(relsXml, templateRId);
+      const templatePath = 'xl/' + templateTarget;
+      const templateXml = await zip.file(templatePath).async("text");
+      const nsMatch = templateXml.match(/<(\w+):sheetData\b/);
+      const ns = nsMatch ? nsMatch[1] + ':' : '';
+
+      // 用第一条数据行（第3行）的样式作参照（最后几行可能是空行）
+      const colStyles = extractRowStyles(templateXml, ns, 3) || ['5','6','7','7','6','7'];
+      const colTypes = extractRowTypes(templateXml, ns, 3) || ['n','n','s','s','s','s'];
+      // colTypes: 'n'=数字(无t="s"), 's'=共享字符串(t="s")
+      // 确保整改结果列(E)和整改时间列(F)都使用居中样式
+      if (colStyles && colStyles.length >= 6) {
+        colStyles[4] = colStyles[4]; // 整改时间保持居中
+        colStyles[5] = colStyles[4]; // 整改结果复用整改时间的居中样式
+      }
+      console.log('列样式(已修正):', colStyles, '列类型:', colTypes);
+
+      // === 预处理：计算每个已有 sheet 的最后一个序号和行号 ===
+      const preWb = XLSX.read(zipData, { type: 'array' });
+      const maxSeqBySheet = {};
+      const maxRowBySheet = {};
+      for (const name of preWb.SheetNames) {
+        const ws = preWb.Sheets[name];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        maxSeqBySheet[name] = 0;
+        maxRowBySheet[name] = rows.length; // SheetJS 行数
+        for (let i = rows.length - 1; i >= 0; i--) {
+          if (rows[i][0] && !isNaN(Number(rows[i][0]))) {
+            maxSeqBySheet[name] = Number(rows[i][0]);
+            break;
+          }
+        }
+        console.log(`Sheet "${name}": maxSeq=${maxSeqBySheet[name]}, rows=${maxRowBySheet[name]}`);
+      }
+
+      // === 按 年份+月份 分组 entries ===
+      var now = new Date();
+      var fallbackYear = selYear || now.getFullYear();
+      var groups = new Map(); // "2026年8月" → [{ entry, ... }]
+      for (var ei = 0; ei < entries.length; ei++) {
+        var e = entries[ei];
+        var month = extractMonth(e.date) || (now.getMonth() + 1) + '月';
+        var yr = (e._year) || extractYear(e.date, null) || fallbackYear;
+        var key = yr + '年' + month;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(e);
+      }
+      console.log('年月分组:', [...groups.keys()]);
+
+      // 处理每个月份组
+      const rowTag = ns ? `${ns}row` : 'row';
+      const cTag = ns ? `${ns}c` : 'c';
+      const vTag = ns ? `${ns}v` : 'v';
+      const colLetters = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+      // 跟踪已使用的 sheetId 和 rId（从文件中实际解析最大值）
+      const allIds = wbXml.match(/sheetId="(\d+)"/g);
+      let nextSheetId = 1;
+      if (allIds) {
+        nextSheetId = Math.max(...allIds.map(s => parseInt(s.match(/"(\d+)"/)[1]))) + 1;
+      }
+      const allRels = relsXml.match(/Id="rId(\d+)"/g);
+      let nextRId = 1;
+      if (allRels) {
+        nextRId = Math.max(...allRels.map(s => parseInt(s.match(/rId(\d+)/)[1]))) + 1;
+      }
+      console.log('起始 sheetId:', nextSheetId, '起始 rId:', nextRId);
+
+      for (const [yearMonthKey, monthEntries] of groups) {
+        // 提取年份
+        var year = parseInt(yearMonthKey.match(/^(\d{4})年/)[1]) || fallbackYear;
+        // 查找匹配的 sheet：先精确匹配"2026年11月"，再降级匹配"11月"（兼容旧文件）
+        var simpleMonth = yearMonthKey.replace(/^\d{4}年/, ''); // "2026年11月" → "11月"
+        var matchedSheetName = null;
+        if (sheetMap[yearMonthKey]) {
+          matchedSheetName = yearMonthKey;
+        } else if (sheetMap[simpleMonth]) {
+          matchedSheetName = simpleMonth;
+        }
+
+        if (matchedSheetName) {
+          // 校验年份兼容性：如果匹配的是简单"11月"（无年份），检查标题年份是否一致
+          if (matchedSheetName === simpleMonth && matchedSheetName !== yearMonthKey) {
+            // 读取该 sheet 标题行，提取年份
+            const rId = sheetMap[matchedSheetName];
+            const tgt = parseRelsTarget(relsXml, rId);
+            const sp = 'xl/' + tgt;
+            const sx = await zip.file(sp).async("text");
+            const trm = sx.match(new RegExp('<' + (ns?ns+'row':'row') + '\\s[^>]*r="1"[^>]*>[\\s\\S]*?<\\/' + (ns?ns+'row':'row') + '>'));
+            if (trm) {
+              const ccm = trm[0].match(new RegExp('<' + (ns?ns+'c':'c') + '[^>]*t="s"[^>]*><' + (ns?ns+'v':'v') + '>(\\d+)<\\/' + (ns?ns+'v':'v') + '><\\/' + (ns?ns+'c':'c') + '>'));
+              if (ccm) {
+                const titleSstIdx = parseInt(ccm[1]);
+                const titleText = sstEntries[titleSstIdx] || '';
+                const titleYearMatch = titleText.match(/(\d{4})年/);
+                if (titleYearMatch && parseInt(titleYearMatch[1]) !== year) {
+                  // 年份不一致，不匹配此 sheet，改为创建新 sheet
+                  console.log('年份冲突: 条目' + year + ' vs sheet标题' + titleYearMatch[1] + '，将创建新sheet');
+                  matchedSheetName = null;
+                }
+              }
+            }
+          }
+        }
+
+        if (matchedSheetName) {
+          // === Sheet 已存在，追加到末尾 ===
+          const rId = sheetMap[matchedSheetName];
+          const target = parseRelsTarget(relsXml, rId);
+          const sheetPath = 'xl/' + target;
+          let sheetXml = await zip.file(sheetPath).async("text");
+
+          const currentMaxSeq = maxSeqBySheet[matchedSheetName] || 0;
+          const existingMaxRow = maxRowBySheet[matchedSheetName] || 0;
+
+          const newRowXmls = [];
+          for (let i = 0; i < monthEntries.length; i++) {
+            const entry = monthEntries[i];
+            const rowNum = existingMaxRow + i + 1;
+            const year = extractYear(entry.date, fallbackYear);
+            const dateSerial = dateToExcelSerial(entry.date, year);
+            const values = [
+              String(currentMaxSeq + i + 1),           // A: 序号
+              dateSerial !== null ? String(dateSerial) : '', // B: 日期序列号
+              entry.location || '',                     // C: 位置
+              entry.issue || '',                        // D: 问题项
+              entry.repairTime || '√',                  // E: 整改时间
+              entry.result || '已处理'                  // F: 整改结果
+            ];
+
+            let cellsXml = '';
+            for (let ci = 0; ci < 6; ci++) {
+              const ref = `${colLetters[ci]}${rowNum}`;
+              const style = colStyles[ci] || '0';
+              const type = colTypes[ci] || 's';
+              const val = values[ci];
+
+              if (val === '' || val === null || val === undefined) {
+                cellsXml += `<${cTag} r="${ref}" s="${style}"><${vTag}>0</${vTag}></${cTag}>`;
+              } else if (type === 'n' && /^\d+$/.test(String(val))) {
+                // 只有纯数字才用数字类型写入（序号和日期序列号）
+                cellsXml += `<${cTag} r="${ref}" s="${style}"><${vTag}>${val}</${vTag}></${cTag}>`;
+              } else {
+                // 中文/文本内容一律走共享字符串，防止变成 0
+                sstEntries.push(String(val));
+                cellsXml += `<${cTag} r="${ref}" t="s" s="${style}"><${vTag}>${sstEntries.length - 1}</${vTag}></${cTag}>`;
+              }
+            }
+            newRowXmls.push(`<${rowTag} r="${rowNum}" spans="1:6">${cellsXml}</${rowTag}>`);
+          }
+
+          var sheetDataClose = ns ? '</' + ns + 'sheetData>' : '</sheetData>';
+          sheetXml = sheetXml.replace(sheetDataClose, newRowXmls.join('') + sheetDataClose);
+          // 按日期列(B列)排序所有数据行(行3+)，确保日期顺序正确
+          sheetXml = sortSheetDataRows(sheetXml, ns, rowTag);
+          // 更新 dimension
+          const newTotalRows = 2 + (existingMaxRow - 2 + monthEntries.length);
+          sheetXml = sheetXml.replace(/<dimension[^>]*\/>/, `<dimension ref="A1:F${newTotalRows}"/>`);
+          zip.file(sheetPath, sheetXml);
+          console.log('Sheet "' + matchedSheetName + '" 追加 ' + monthEntries.length + ' 行并排序');
+
+        } else {
+          // === Sheet 不存在，从模板创建新 sheet ===
+          const newSheetName = yearMonthKey;
+          // year 已在上面从 yearMonthKey 中提取
+
+          // 用模板 XML 创建新 sheet，替换标题并清空数据行
+          let newSheetXml = templateXml;
+
+          // 解析模板中所有行
+          const allRowMatches = [];
+          const rowReGlobal = new RegExp(`<${rowTag}\\s[^>]*r="(\\d+)"[^>]*>[\\s\\S]*?<\\/${rowTag}>`, 'g');
+          let rm;
+          while ((rm = rowReGlobal.exec(newSheetXml)) !== null) {
+            allRowMatches.push({ full: rm[0], num: parseInt(rm[1]) });
+          }
+          const rowsToKeep = allRowMatches.filter(r => r.num <= 2);
+
+          // 更新标题行中的月份
+          let newTitleRowXml = rowsToKeep.find(r => r.num === 1)?.full || '';
+          const titleRowMatch = newSheetXml.match(new RegExp(`<${rowTag}\\s[^>]*r="1"[^>]*>([\\s\\S]*?)<\\/${rowTag}>`));
+          if (titleRowMatch) {
+            const titleRow = titleRowMatch[0];
+            // 匹配带 t="s" 的单元格及其共享字符串引用
+            const cellMatch = titleRow.match(new RegExp(`<${cTag}[^>]*t="s"[^>]*><${vTag}>(\\d+)<\\/${vTag}><\\/${cTag}>`));
+            if (cellMatch) {
+              const oldSstIdx = parseInt(cellMatch[1]);
+              const oldTitle = sstEntries[oldSstIdx] || '';
+              var monthNum = parseInt(yearMonthKey.match(/年(\d{1,2})月/)[1]) || 1;
+              var newTitle = oldTitle.replace(/\d{4}年\d{1,2}月/, year + '年' + monthNum + '月');
+              // 确保标题格式与六月一致：统一使用「工程巡检记录表」后缀
+              if (newTitle.indexOf('巡检记录表') === -1) {
+                newTitle = newTitle.replace(/工程$/, '工程巡检记录表');
+              }
+              sstEntries.push(newTitle);
+              const newSstIdx = sstEntries.length - 1;
+              newTitleRowXml = titleRow.replace(cellMatch[0], cellMatch[0].replace(new RegExp(`<${vTag}>${oldSstIdx}<\\/${vTag}>`), `<${vTag}>${newSstIdx}</${vTag}>`));
+              console.log(`标题: "${oldTitle}" -> "${newTitle}"`);
+            }
+          }
+
+          // 清空 sheetData
+          newSheetXml = newSheetXml.replace(new RegExp(`<${ns}sheetData>[\\s\\S]*?<\\/${ns}sheetData>`), 'PLACEHOLDER');
+
+          // 重建 sheetData
+          const sheetDataOpen = ns ? `<${ns}sheetData>` : '<sheetData>';
+          const sheetDataClose = ns ? `</${ns}sheetData>` : '</sheetData>';
+
+          // 生成新数据行（从 row 3 开始，序号从 1 开始）
+          const newRowXmls = [];
+          for (let i = 0; i < monthEntries.length; i++) {
+            const entry = monthEntries[i];
+            const rowNum = 3 + i;
+            const year = extractYear(entry.date, fallbackYear);
+            const dateSerial = dateToExcelSerial(entry.date, year);
+            const values = [
+              String(i + 1),                           // A: 序号
+              dateSerial !== null ? String(dateSerial) : '', // B: 日期序列号
+              entry.location || '',                     // C: 位置
+              entry.issue || '',                        // D: 问题项
+              entry.repairTime || '√',                  // E: 整改时间
+              entry.result || '已处理'                  // F: 整改结果
+            ];
+
+            let cellsXml = '';
+            for (let ci = 0; ci < 6; ci++) {
+              const ref = `${colLetters[ci]}${rowNum}`;
+              const style = colStyles[ci] || '0';
+              const type = colTypes[ci] || 's';
+              const val = values[ci];
+
+              if (val === '' || val === null || val === undefined) {
+                cellsXml += '<' + cTag + ' r="' + ref + '" s="' + style + '"><' + vTag + '>0</' + vTag + '></' + cTag + '>';
+              } else if (type === 'n' && /^\d+$/.test(String(val))) {
+                cellsXml += '<' + cTag + ' r="' + ref + '" s="' + style + '"><' + vTag + '>' + val + '</' + vTag + '></' + cTag + '>';
+              } else {
+                sstEntries.push(String(val));
+                cellsXml += '<' + cTag + ' r="' + ref + '" t="s" s="' + style + '"><' + vTag + '>' + (sstEntries.length - 1) + '</' + vTag + '></' + cTag + '>';
+              }
+            }
+            newRowXmls.push('<' + rowTag + ' r="' + rowNum + '" spans="1:6">' + cellsXml + '</' + rowTag + '>');
+          }
+
+          // 拼接：新标题行 + 表头行 + 数据行
+          const totalRows = 2 + monthEntries.length; // 标题 + 表头 + 数据
+          const headerRowXml = rowsToKeep.find(r => r.num === 2)?.full || '';
+          const newSheetData = `${sheetDataOpen}${newTitleRowXml}${headerRowXml}${newRowXmls.join('')}${sheetDataClose}`;
+          newSheetXml = newSheetXml.replace(/PLACEHOLDER/, newSheetData);
+          // 修正 dimension 引用（去掉旧的大范围，避免空白行间距）
+          newSheetXml = newSheetXml.replace(/<dimension[^>]*\/>/, `<dimension ref="A1:F${totalRows}"/>`);
+
+          // 确定新 sheet 的文件路径
+          const newSheetFile = `xl/worksheets/sheet${nextSheetId}.xml`;
+          zip.file(newSheetFile, newSheetXml);
+
+          // 更新 workbook.xml
+          const newRId = 'rId' + nextRId;
+          const sheetsCloseMatch = wbXml.match(/<\/sheets>/);
+          const newSheetEntry = `<sheet name="${newSheetName}" sheetId="${nextSheetId}" r:id="${newRId}"/>`;
+          const updatedWbXml = wbXml.replace('</sheets>', newSheetEntry + '</sheets>');
+          zip.file('xl/workbook.xml', updatedWbXml);
+          wbXml = updatedWbXml; // 同步本地变量，供后续迭代使用
+
+          // 更新 rels
+          const newRelEntry = `<Relationship Id="${newRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${nextSheetId}.xml"/>`;
+          const updatedRelsXml = relsXml.replace('</Relationships>', newRelEntry + '</Relationships>');
+          zip.file(relsPath, updatedRelsXml);
+          relsXml = updatedRelsXml; // 同步
+
+          // 更新 Content_Types.xml
+          if (contentTypesXml) {
+            const ctEntry = `<Override PartName="/xl/worksheets/sheet${nextSheetId}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`;
+            contentTypesXml = contentTypesXml.replace('</Types>', ctEntry + '</Types>');
+            zip.file(ctPath, contentTypesXml);
+          }
+
+          // 更新内存中的 sheetMap 和 relsXml（供后续分组使用）
+          sheetMap[newSheetName] = newRId;
+          relsXml = updatedRelsXml;
+          nextSheetId++;
+          nextRId++;
+
+          console.log(`创建新 Sheet "${newSheetName}"，${monthEntries.length} 行`);
+        }
+      }
+
+      // 更新共享字符串
+      zip.file(sstPath, buildSharedStringsXml(sstEntries, sstNs));
+
+      const newZipData = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
+      console.log('新文件大小:', newZipData.byteLength, 'bytes');
+      return { buffer: newZipData, groups: groups };
+    }
+
+    function parseSheetMap(wbXml) {
+      const map = {};
+      // 支持命名空间前缀: <sheet name="..." r:id="..."> 或 <x:sheet name="..." xr:id="...">
+      const re = /<(?:[\w]+:)?sheet[^>]*name="([^"]+)"[^>]*[\w:]+id="([^"]+)"/g;
+      let m;
+      while ((m = re.exec(wbXml)) !== null) {
+        map[m[1]] = m[2];
+      }
+      return map;
+    }
+
+    function parseRelsTarget(relsXml, rId) {
+      // 尝试两种属性顺序（XML 属性顺序不固定）
+      let re = new RegExp(`<Relationship[^>]*Id="${rId}"[^>]*Target="([^"]+)"`);
+      let m = relsXml.match(re);
+      if (m) return m[1];
+      re = new RegExp(`<Relationship[^>]*Target="([^"]+)"[^>]*Id="${rId}"`);
+      m = relsXml.match(re);
+      return m ? m[1] : null;
+    }
+
+    function parseSharedStrings(sstXml, ns) {
+      const entries = [];
+      const siTag = ns ? `${ns}si` : 'si';
+      const tTag = ns ? `${ns}t` : 't';
+      const siRe = new RegExp(`<${siTag}[^>]*>([\\s\\S]*?)<\\/${siTag}>`, 'g');
+      const tRe = new RegExp(`<${tTag}[^>]*>([\\s\\S]*?)<\\/${tTag}>`, 'g');
+      let m;
+      while ((m = siRe.exec(sstXml)) !== null) {
+        let tm;
+        let text = '';
+        while ((tm = tRe.exec(m[1])) !== null) {
+          text += tm[1];
+        }
+        entries.push(text);
+      }
+      return entries;
+    }
+
+    function buildSharedStringsXml(entries, ns) {
+      const count = entries.length;
+      const siTag = ns ? `${ns}si` : 'si';
+      const tTag = ns ? `${ns}t` : 't';
+      let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${count}" uniqueCount="${count}">`;
+      for (const e of entries) {
+        xml += `<${siTag}><${tTag}>${escapeXml(e)}</${tTag}></${siTag}>`;
+      }
+      xml += '</sst>';
+      return xml;
+    }
+
+    // 从指定行提取样式（rowNum 如 3 = 第一条数据行）
+    function extractRowStyles(sheetXml, ns, rowNum) {
+      const rowTag = ns ? `${ns}row` : 'row';
+      const cTag = ns ? `${ns}c` : 'c';
+      const re = new RegExp(`<${rowTag}\\s[^>]*r="${rowNum}"[^>]*>([\\s\\S]*?)<\\/${rowTag}>`);
+      const m = sheetXml.match(re);
+      if (!m) return null;
+      const styles = [];
+      const cellRe = new RegExp(`<${cTag}\\s[^>]*s="(\\d+)"`, 'g');
+      let cm;
+      while ((cm = cellRe.exec(m[1])) !== null) {
+        styles.push(cm[1]);
+      }
+      return styles.length >= 5 ? styles.slice(0, 6) : null;
+    }
+
+    // 从指定行提取每列类型：'n'=数字, 's'=共享字符串
+    function extractRowTypes(sheetXml, ns, rowNum) {
+      const rowTag = ns ? `${ns}row` : 'row';
+      const cTag = ns ? `${ns}c` : 'c';
+      const re = new RegExp(`<${rowTag}\\s[^>]*r="${rowNum}"[^>]*>([\\s\\S]*?)<\\/${rowTag}>`);
+      const m = sheetXml.match(re);
+      if (!m) return null;
+      const types = [];
+      const cellRe = new RegExp(`<${cTag}\\s([^>]*)>`, 'g');
+      let cm;
+      while ((cm = cellRe.exec(m[1])) !== null) {
+        types.push(cm[1].includes('t="s"') ? 's' : 'n');
+      }
+      return types.length >= 5 ? types.slice(0, 6) : null;
+    }
+
+    // 保留旧函数名作为兼容（找最后一个有6个完整cell的数据行）
+    function extractLastRowStyles(sheetXml, ns) {
+      return extractRowStyles(sheetXml, ns, 3);
+    }
+
+    // 按 B 列(日期序列号)排序 sheet 中的所有数据行
+    function sortSheetDataRows(sheetXml, ns, rowTag) {
+      var sdOpen = (ns ? '<' + ns + 'sheetData>' : '<sheetData>');
+      var sdClose = (ns ? '</' + ns + 'sheetData>' : '</sheetData>');
+      var idx0 = sheetXml.indexOf(sdOpen);
+      var idx1 = sheetXml.indexOf(sdClose, idx0);
+      if (idx0 < 0 || idx1 < 0) return sheetXml;
+      var inner = sheetXml.substring(idx0 + sdOpen.length, idx1);
+
+      var cTag = (ns ? ns + 'c' : 'c');
+      var vTag = (ns ? ns + 'v' : 'v');
+      var rowRe = new RegExp('<' + rowTag + '\\s[^>]*r="(\\d+)"[^>]*>[\\s\\S]*?<\\/' + rowTag + '>', 'g');
+      var allRows = [];
+      var rm;
+      while ((rm = rowRe.exec(inner)) !== null) {
+        allRows.push({ full: rm[0], num: parseInt(rm[1]) });
+      }
+      if (allRows.length <= 2) return sheetXml;
+
+      var fixed = allRows.filter(function(r) { return r.num <= 2; });
+      var dataRows = allRows.filter(function(r) { return r.num > 2; });
+
+      // 解析 B 列日期值用于排序
+      dataRows.forEach(function(r) {
+        var bRe = new RegExp('<' + cTag + ' r="B\\d+"[^>]*><' + vTag + '>([^<]*)<\\/' + vTag + '><\\/' + cTag + '>');
+        var bm = r.full.match(bRe);
+        r._dateVal = bm ? parseFloat(bm[1]) : 0;
+      });
+      dataRows.sort(function(a, b) { return a._dateVal - b._dateVal; });
+
+      // 重新编号：行号 + 单元格引用 + 序号值
+      var sorted = fixed.concat(dataRows);
+      var cols = ['A','B','C','D','E','F'];
+      var newInner = '';
+      for (var i = 0; i < sorted.length; i++) {
+        var oldNum = sorted[i].num;
+        var newNum = i + 1;
+        var xml = sorted[i].full;
+
+        if (oldNum !== newNum) {
+          // 更新行号: r="OLD" → r="NEW"
+          xml = xml.replace(' r="' + oldNum + '"', ' r="' + newNum + '"');
+          // 更新每个单元格引用: "A3" → "A4" 等
+          for (var ci = 0; ci < cols.length; ci++) {
+            // 匹配 "COL + 旧行号 + (引号或非数字)"，避免 "A3" 误匹配 "A30" 中的 "A3"
+            var re = new RegExp('"' + cols[ci] + oldNum + '"', 'g');
+            xml = xml.replace(re, '"' + cols[ci] + newNum + '"');
+          }
+        }
+
+        // 更新序号值
+        if (sorted[i].num > 2) {
+          var dataIdx = -1;
+          for (var di = 0; di < dataRows.length; di++) {
+            if (dataRows[di] === sorted[i]) { dataIdx = di; break; }
+          }
+          if (dataIdx >= 0) {
+            var newSeq = dataIdx + 1;
+            // 替换 A 列的值
+            var seqRe = new RegExp('(<' + cTag + ' r="A' + newNum + '"[^>]*><' + vTag + '>)[^<]*(<\\/' + vTag + '><\\/' + cTag + '>)');
+            xml = xml.replace(seqRe, '$1' + newSeq + '$2');
+          }
+        }
+        newInner += xml;
+      }
+
+      return sheetXml.substring(0, idx0) + sdOpen + newInner + sdClose + sheetXml.substring(idx1 + sdClose.length);
+    }
+
+    function downloadBuffer(buffer) {
+      const now = new Date();
+      const filename = `工程巡检记录表_${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}.xlsx`;
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // ==================== 工具 ====================
+    function escapeHtml(str) {
+      if (!str) return '';
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    function escapeXml(str) {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+    }
+
+    // ==================== 初始化 ====================
+    pasteDate.value = getToday();
+    pasteYear.value = new Date().getFullYear();
+    infoBar.style.display = 'none';
+  </script>
+</body>
+</html>
